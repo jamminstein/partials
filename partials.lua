@@ -30,19 +30,31 @@ local PARTIALS = {
 -- index 4 = 7/4, index 8 = 11/4, index 10 = 13/4
 local MICROTONAL = {[4]=true, [8]=true, [10]=true}
 
-local ROOT_HZ = 55.0  -- A1
+local base_freq = 261.0  -- C4, default fundamental
+local voice_count = 3    -- number of active voices (2-6)
 
 -- FIX: declare main_lattice BEFORE rebuild_lattice so it is in upvalue scope
 local main_lattice
 
-local voices = {
-  {idx = 1, acc = 0.000, hz = ROOT_HZ * (4/4)},
-  {idx = 5, acc = 0.000, hz = ROOT_HZ * (8/4)},
-  {idx = 9, acc = 0.000, hz = ROOT_HZ * (12/4)},
-}
+local voices = {}
+
+-- Initialize voices with base_freq and voice_count
+local function init_voices()
+  voices = {}
+  for i = 1, voice_count do
+    local start_idx = math.floor(((i - 1) * #PARTIALS) / voice_count) + 1
+    voices[i] = {idx = start_idx, acc = 0.000, hz = base_freq * PARTIALS[start_idx]}
+  end
+end
+
+-- Call initial setup
+init_voices()
 
 local drift    = 0.003  -- how much slower voices 2+3 run vs voice 1
 local playing  = true
+
+-- MIDI output device
+local midi_out = nil
 
 local DIVS     = {1/32, 1/16, 1/8, 1/4, 1/2, 1}
 local DIVNAMES = {"1/32","1/16","1/8","1/4","1/2","1"}
@@ -64,9 +76,18 @@ local function walk(idx)
 end
 
 local function set_voice_hz(i)
+  if i > voice_count then return end
   local v = voices[i]
-  v.hz = ROOT_HZ * PARTIALS[v.idx]
+  v.hz = base_freq * PARTIALS[v.idx]
   engine["v" .. i .. "_hz"](v.hz)
+
+  -- Send MIDI note on voice's channel (ch 1-6)
+  if midi_out then
+    local midi_note = 69 + 12 * math.log(v.hz / 440) / math.log(2)
+    midi_note = math.floor(midi_note + 0.5)
+    midi_note = math.max(0, math.min(127, midi_note))
+    midi_out:note_on(midi_note, 90, i)  -- i = channel 1-6
+  end
 end
 
 local function rebuild_lattice()
@@ -81,27 +102,27 @@ local function rebuild_lattice()
       if not playing then return end
 
       for i, v in ipairs(voices) do
-        if i == 1 then
-          -- FIX: voice 1 uses a simple every-tick step (no acc)
-          -- Previously voice 1 was walked unconditionally AND
-          -- also walked again when its acc overflowed, causing
-          -- occasional double-steps.
-          v.idx = walk(v.idx)
-          set_voice_hz(1)
-        else
-          -- FIX: voices 2 and 3 each accumulate at their own rate
-          -- rate = 1.0 - (drift * i), so:
-          --   voice 2 at drift=0.003 accumulates 0.994/tick -> steps every ~1.006 ticks
-          --   voice 3 at drift=0.003 accumulates 0.991/tick -> steps every ~1.009 ticks
-          -- This gives genuine, independent phase drift between all three voices.
-          -- Previously all voices shared the same drift amount, so voices 2 and 3
-          -- always overflowed at the same tick -- no actual relative drift.
-          local rate = 1.0 - (drift * i)
-          v.acc = v.acc + rate
-          if v.acc >= 1.0 then
-            v.acc = v.acc - 1.0
+        if i <= voice_count then
+          if i == 1 then
+            -- FIX: voice 1 uses a simple every-tick step (no acc)
+            -- Previously voice 1 was walked unconditionally AND
+            -- also walked again when its acc overflowed, causing
+            -- occasional double-steps.
             v.idx = walk(v.idx)
-            set_voice_hz(i)
+            set_voice_hz(1)
+          else
+            -- FIX: voices 2+ each accumulate at their own rate
+            -- rate = 1.0 - (drift * i), so:
+            --   voice 2 at drift=0.003 accumulates 0.994/tick -> steps every ~1.006 ticks
+            --   voice 3 at drift=0.003 accumulates 0.991/tick -> steps every ~1.009 ticks
+            -- This gives genuine, independent phase drift between all voices.
+            local rate = 1.0 - (drift * i)
+            v.acc = v.acc + rate
+            if v.acc >= 1.0 then
+              v.acc = v.acc - 1.0
+              v.idx = walk(v.idx)
+              set_voice_hz(i)
+            end
           end
         end
       end
@@ -114,10 +135,31 @@ local function rebuild_lattice()
 end
 
 function init()
-  engine.root_hz(ROOT_HZ)
+  midi_out = midi.connect(1)
+
   engine.shimmer(0.002)
 
   params:add_separator("PARTIALS")
+
+  -- Base frequency parameter (20-880 Hz, default 261)
+  params:add_control("base_freq", "base freq",
+    controlspec.new(20, 880, "exp", 1, 261, "Hz"))
+  params:set_action("base_freq", function(v)
+    base_freq = v
+    -- retune all voices immediately
+    for i = 1, voice_count do set_voice_hz(i) end
+    redraw()
+  end)
+
+  -- Voice count parameter (2-6, default 3)
+  params:add_option("voice_count", "voice count",
+    {"2", "3", "4", "5", "6"}, 2)
+  params:set_action("voice_count", function(idx)
+    voice_count = idx + 1
+    init_voices()
+    rebuild_lattice()
+    redraw()
+  end)
 
   params:add_control("shimmer", "shimmer",
     controlspec.new(0, 0.05, "lin", 0.001, 0.002, ""))
@@ -137,12 +179,12 @@ end
 
 function enc(n, d)
   if n == 1 then
-    -- root frequency: semitone steps (12-TET ratio)
+    -- base frequency: semitone steps (12-TET ratio)
     local factor = d > 0 and 1.05946 or 0.94387
-    ROOT_HZ = math.max(27.5, math.min(440, ROOT_HZ * factor))
-    engine.root_hz(ROOT_HZ)
+    base_freq = math.max(20, math.min(880, base_freq * factor))
+    params:set("base_freq", base_freq)
     -- retune all voices immediately
-    for i = 1, 3 do set_voice_hz(i) end
+    for i = 1, voice_count do set_voice_hz(i) end
   elseif n == 2 then
     drift = math.max(0.0, math.min(0.05, drift + d * 0.001))
   elseif n == 3 then
@@ -157,9 +199,10 @@ function key(n, z)
   if n == 2 then
     playing = not playing
   elseif n == 3 then
-    -- randomize all voice positions
-    for i, v in ipairs(voices) do
-      v.idx = math.random(1, #PARTIALS)
+    -- Reset all voices to unison (phase 0)
+    for i = 1, voice_count do
+      voices[i].idx = 1  -- all to root
+      voices[i].acc = 0
       set_voice_hz(i)
     end
   end
@@ -230,4 +273,11 @@ end
 
 function cleanup()
   if main_lattice then main_lattice:destroy() end
+  if midi_out then
+    for i = 1, voice_count do
+      for note = 0, 127 do
+        midi_out:note_off(note, 0, i)
+      end
+    end
+  end
 end
