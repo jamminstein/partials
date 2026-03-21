@@ -33,13 +33,15 @@ Engine_Partials : CroneEngine {
           atk  = 0.06,
           rel  = 0.4;
 
-      var sig, env, mod_freq, fm;
+      var sig, env, mod_freq, fm, lfreq;
+
+      lfreq = Lag.kr(freq, 0.01);
 
       // FM shimmer: modulator at ~sqrt(2) * freq so it's inharmonic
-      mod_freq = freq * 1.4142;
-      fm       = SinOsc.ar(mod_freq) * (freq * shimmer);
+      mod_freq = lfreq * 1.4142;
+      fm       = SinOsc.ar(mod_freq) * (lfreq * shimmer);
 
-      sig = SinOsc.ar(freq + fm);
+      sig = SinOsc.ar(lfreq + fm);
 
       env = EnvGen.kr(
         Env.asr(atk, 1.0, rel),
@@ -59,14 +61,15 @@ Engine_Partials : CroneEngine {
           freq = 55,
           amp  = 0.08;
 
-      var sig, f2, f3;
+      var sig, f2, f3, lfreq;
 
-      f2 = freq * 2;   // octave
-      f3 = freq * 3;   // fifth above octave (3rd harmonic)
+      lfreq = Lag.kr(freq, 0.01);
+      f2 = lfreq * 2;   // octave
+      f3 = lfreq * 3;   // fifth above octave (3rd harmonic)
 
-      sig =   SinOsc.ar(freq) * 0.6
-            + SinOsc.ar(f2)   * 0.25
-            + SinOsc.ar(f3)   * 0.10;
+      sig =   SinOsc.ar(lfreq) * 0.6
+            + SinOsc.ar(f2)    * 0.25
+            + SinOsc.ar(f3)    * 0.10;
 
       sig = sig * amp;
       Out.ar(out, sig ! 2);
