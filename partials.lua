@@ -56,6 +56,11 @@ local playing  = true
 -- MIDI output device
 local midi_out = nil
 
+-- OP-XY MIDI
+local opxy_out = nil
+local function opxy_note_on(note, vel) if opxy_out then opxy_out:note_on(note, vel, params:get("opxy_channel")) end end
+local function opxy_note_off(note) if opxy_out then opxy_out:note_off(note, 0, params:get("opxy_channel")) end end
+
 local DIVS     = {1/32, 1/16, 1/8, 1/4, 1/2, 1}
 local DIVNAMES = {"1/32","1/16","1/8","1/4","1/2","1"}
 local div_idx  = 3  -- default 1/8
@@ -82,12 +87,13 @@ local function set_voice_hz(i)
   engine["v" .. i .. "_hz"](v.hz)
 
   -- Send MIDI note on voice's channel (ch 1-6)
+  local midi_note = 69 + 12 * math.log(v.hz / 440) / math.log(2)
+  midi_note = math.floor(midi_note + 0.5)
+  midi_note = math.max(0, math.min(127, midi_note))
   if midi_out then
-    local midi_note = 69 + 12 * math.log(v.hz / 440) / math.log(2)
-    midi_note = math.floor(midi_note + 0.5)
-    midi_note = math.max(0, math.min(127, midi_note))
     midi_out:note_on(midi_note, 90, i)  -- i = channel 1-6
   end
+  opxy_note_on(midi_note, 90)
 end
 
 local function rebuild_lattice()
@@ -136,6 +142,11 @@ end
 
 function init()
   midi_out = midi.connect(1)
+
+  params:add_separator("OP-XY MIDI")
+  params:add{type="number", id="opxy_device", name="OP-XY Device", min=1, max=16, default=2, action=function(v) opxy_out = midi.connect(v) end}
+  params:add{type="number", id="opxy_channel", name="OP-XY Channel", min=1, max=16, default=1}
+  opxy_out = midi.connect(params:get("opxy_device"))
 
   engine.shimmer(0.002)
 
@@ -280,4 +291,5 @@ function cleanup()
       end
     end
   end
+  if opxy_out then for ch=1,16 do opxy_out:cc(123,0,ch) end end
 end
