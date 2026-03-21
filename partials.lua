@@ -319,12 +319,6 @@ end
 
 function cleanup()
   if main_lattice then main_lattice:destroy() end
-  if midi_out then
-    for i = 1, voice_count do
-      for note = 0, 127 do
-        midi_out:note_off(note, 0, i)
-      end
-    end
-  end
+  if midi_out then for ch=1,16 do midi_out:cc(123,0,ch) end end
   if opxy_out then for ch=1,16 do opxy_out:cc(123,0,ch) end end
 end
