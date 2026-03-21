@@ -222,62 +222,97 @@ end
 
 function redraw()
   screen.clear()
+  screen.aa(1)
 
-  -- title
-  screen.level(3)
-  screen.move(1, 7)
-  screen.text("partials")
+  -- ── Title + play state ──
+  screen.font_face(7)
+  screen.font_size(8)
+  screen.level(playing and 15 or 4)
+  screen.move(2, 8)
+  screen.text("PARTIALS")
 
-  -- FIX: replaced Unicode symbols (not in norns bitmap font) with ASCII
-  if playing then
-    screen.level(15)
-    screen.move(120, 7)
-    screen.text(">")
-  else
-    screen.level(4)
-    screen.move(120, 7)
-    screen.text(".")
-  end
+  screen.level(playing and 12 or 3)
+  screen.move(126, 8)
+  screen.text_right(playing and ">" or ".")
 
-  -- three voice lanes
-  for i, v in ipairs(voices) do
-    local y = 16 + (i - 1) * 16
+  -- ── Base freq display ──
+  screen.level(5)
+  screen.font_face(1)
+  screen.font_size(8)
+  screen.move(64, 8)
+  screen.text_center(string.format("%.0f Hz", base_freq))
+
+  -- ── Voice lanes ──
+  local lane_count = math.min(voice_count, #voices)
+  local lane_h = math.floor(38 / math.max(1, lane_count))
+  for i = 1, lane_count do
+    local v = voices[i]
+    if not v then break end
+    local y = 12 + (i - 1) * lane_h
     local ratio = (v.idx - 1) / (#PARTIALS - 1)
-    local x = math.floor(ratio * 96) + 10
+    local x = math.floor(ratio * 100) + 10
 
-    -- lane background track
-    screen.level(2)
-    screen.move(10, y + 4)
-    screen.line(106, y + 4)
+    -- Voice label
+    screen.level(3)
+    screen.font_size(8)
+    screen.move(2, y + lane_h - 2)
+    screen.text(i)
+
+    -- Lane track with partial markers
+    screen.level(1)
+    screen.move(10, y + math.floor(lane_h / 2))
+    screen.line(110, y + math.floor(lane_h / 2))
     screen.stroke()
 
-    -- dot: brighter for microtonal partials (7/4, 11/4, 13/4)
-    local brightness = MICROTONAL[v.idx] and 15 or 10
-    screen.level(brightness)
-    screen.circle(x, y + 4, 3)
+    -- Tick marks at microtonal positions
+    for idx, _ in pairs(MICROTONAL) do
+      local tick_x = math.floor(((idx - 1) / (#PARTIALS - 1)) * 100) + 10
+      screen.level(2)
+      screen.move(tick_x, y + 2)
+      screen.line(tick_x, y + lane_h - 2)
+      screen.stroke()
+    end
+
+    -- Voice position dot
+    local is_micro = MICROTONAL[v.idx]
+    local dot_r = is_micro and 4 or 3
+    screen.level(is_micro and 15 or 10)
+    screen.circle(x, y + math.floor(lane_h / 2), dot_r)
     screen.fill()
 
-    -- FIX: clamp label x so it never clips past the right edge (128px)
-    screen.level(MICROTONAL[v.idx] and 12 or 5)
-    local lx = math.min(x + 5, 108)
-    screen.move(lx, y + 8)
+    -- Partial ratio label
+    screen.level(is_micro and 12 or 4)
+    screen.font_size(8)
+    local lx = math.min(x + 6, 108)
+    screen.move(lx, y + math.floor(lane_h / 2) + 3)
     local num = math.floor(PARTIALS[v.idx] * 4 + 0.5)
     screen.text(num .. "/4")
   end
 
-  -- drift indicator bar
-  screen.level(4)
-  screen.move(1, 60)
-  screen.text("drift")
-  screen.level(8)
-  screen.move(28, 60)
-  screen.line(28 + math.floor(drift / 0.05 * 60), 60)
-  screen.stroke()
+  -- ── Bottom bar: drift + division ──
+  screen.font_face(1)
+  screen.font_size(8)
 
-  -- step div
+  -- Drift label + bar
   screen.level(4)
-  screen.move(100, 60)
-  screen.text(DIVNAMES[div_idx])
+  screen.move(2, 60)
+  screen.text("drift")
+  -- Bar background
+  screen.level(2)
+  screen.rect(30, 57, 60, 3)
+  screen.stroke()
+  -- Bar fill
+  local drift_w = math.floor(drift / 0.05 * 60)
+  if drift_w > 0 then
+    screen.level(8)
+    screen.rect(30, 57, drift_w, 3)
+    screen.fill()
+  end
+
+  -- Division
+  screen.level(6)
+  screen.move(126, 60)
+  screen.text_right(DIVNAMES[div_idx])
 
   screen.update()
 end
